@@ -21,6 +21,10 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - uses: actions/checkout@master
+      with:
+        clean: false
+      
     - name: Download SteamCMD
       shell: bash
       run: |
