@@ -10,9 +10,16 @@ local function read(path --[[@param path string]]) ---@return string
 end
 
 local function get_current_dir()
-	local cd = io.popen("cd")
-	local dir = cd:read("*l")
-	cd:close()
+	local dir = os.getenv("PWD") -- Linux
+	if dir == nil then
+		local cd = io.popen("cd") -- Windows
+		dir = cd:read("*l")
+		cd:close()
+	end
+
+	assert(dir ~= nil, "Can't detect current working directory")
+
+
 
 	if dir[#dir] ~= PATH_SEP then
 		dir = dir .. PATH_SEP
