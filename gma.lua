@@ -9,6 +9,53 @@ local function read(path --[[@param path string]]) ---@return string
 	return content
 end
 
+local function get_current_dir()
+	local dir = os.getenv("PWD") -- Linux
+	if dir == nil then
+		local cd = io.popen("cd") -- Windows
+		dir = cd:read("*l")
+		cd:close()
+	end
+
+	assert(dir ~= nil, "Can't detect current working directory")
+
+
+
+	if dir[#dir] ~= PATH_SEP then
+		dir = dir .. PATH_SEP
+	end
+
+	return dir
+end
+
+local function remove_prefix(orig, prefix)
+	local prefixStart, prefixEnd = string.find(orig, prefix, 1, true)
+
+	if prefixStart ~= 1 then return orig end
+
+	return "."..PATH_SEP..orig:sub(prefixEnd + 1)
+end
+
+local pattern_escape_replacements = {
+	["("] = "%(",
+	[")"] = "%)",
+	["."] = "%.",
+	["%"] = "%%",
+	["+"] = "%+",
+	["-"] = "%-",
+	["*"] = "%*",
+	["?"] = "%?",
+	["["] = "%[",
+	["]"] = "%]",
+	["^"] = "%^",
+	["$"] = "%$",
+	["\0"] = "%z"
+}
+
+function string.PatternSafe( str )
+	return ( string.gsub( str, ".", pattern_escape_replacements ) )
+end
+
 ---@generic T, V
 ---@param t T[]
 ---@param f fun(v: T, k: integer): V
@@ -86,10 +133,103 @@ local function decode(json --[[@param json string]]) ---@return table
 end
 
 local function wildcard2pattern(s --[[@param s string]])
-	return "^%./" .. s:gsub("%.", "%%."):gsub("%*", ".*") .. "$"
+	return "^%./" .. s:PatternSafe():gsub("%%%*", ".*") .. "$"
 end
 
+local function passes_any_filter(path, filter)
+	for _, pattern in ipairs(filter) do
+		if path:match(pattern) then return true end
+	end
+
+	return false
+end
+
+-- Retrieved from https://github.com/Facepunch/gmad/blob/master/include/AddonWhiteList.h
+local whitelist = map({
+	"lua/*.lua",
+	"scenes/*.vcd",
+	"particles/*.pcf",
+	"resource/fonts/*.ttf",
+	"scripts/vehicles/*.txt",
+	"resource/localization/*/*.properties",
+	"maps/*.bsp",
+	"maps/*.lmp",
+	"maps/*.nav",
+	"maps/*.ain",
+	"maps/thumb/*.png",
+	"sound/*.wav",
+	"sound/*.mp3",
+	"sound/*.ogg",
+	"materials/*.vmt",
+	"materials/*.vtf",
+	"materials/*.png",
+	"materials/*.jpg",
+	"materials/*.jpeg",
+	"materials/colorcorrection/*.raw",
+	"models/*.mdl",
+	"models/*.vtx",
+	"models/*.phy",
+	"models/*.ani",
+	"models/*.vvd",
+	"gamemodes/*/*.txt",
+	"gamemodes/*/*.fgd",
+	"gamemodes/*/logo.png",
+	"gamemodes/*/icon24.png",
+	"gamemodes/*/gamemode/*.lua",
+	"gamemodes/*/entities/effects/*.lua",
+	"gamemodes/*/entities/weapons/*.lua",
+	"gamemodes/*/entities/entities/*.lua",
+	"gamemodes/*/backgrounds/*.png",
+	"gamemodes/*/backgrounds/*.jpg",
+	"gamemodes/*/backgrounds/*.jpeg",
+	"gamemodes/*/content/models/*.mdl",
+	"gamemodes/*/content/models/*.vtx",
+	"gamemodes/*/content/models/*.phy",
+	"gamemodes/*/content/models/*.ani",
+	"gamemodes/*/content/models/*.vvd",
+	"gamemodes/*/content/materials/*.vmt",
+	"gamemodes/*/content/materials/*.vtf",
+	"gamemodes/*/content/materials/*.png",
+	"gamemodes/*/content/materials/*.jpg",
+	"gamemodes/*/content/materials/*.jpeg",
+	"gamemodes/*/content/materials/colorcorrection/*.raw",
+	"gamemodes/*/content/scenes/*.vcd",
+	"gamemodes/*/content/particles/*.pcf",
+	"gamemodes/*/content/resource/fonts/*.ttf",
+	"gamemodes/*/content/scripts/vehicles/*.txt",
+	"gamemodes/*/content/resource/localization/*/*.properties",
+	"gamemodes/*/content/maps/*.bsp",
+	"gamemodes/*/content/maps/*.nav",
+	"gamemodes/*/content/maps/*.ain",
+	"gamemodes/*/content/maps/thumb/*.png",
+	"gamemodes/*/content/sound/*.wav",
+	"gamemodes/*/content/sound/*.mp3",
+	"gamemodes/*/content/sound/*.ogg",
+
+	-- Immutable version of `data` folder: https://github.com/Facepunch/gmad/commit/d55a4438a5bc0d2f25c02bda1e73e8034fdf736b
+	"data_static/*.txt",
+	"data_static/*.dat",
+	"data_static/*.json",
+	"data_static/*.xml",
+	"data_static/*.csv",
+	"data_static/*.dem",
+	"data_static/*.vcd",
+
+	"data_static/*.vtf",
+	"data_static/*.vmt",
+	"data_static/*.png",
+	"data_static/*.jpg",
+	"data_static/*.jpeg",
+
+	"data_static/*.mp3",
+	"data_static/*.wav",
+	"data_static/*.ogg",
+}, wildcard2pattern)
+
 do
+	---@type string
+	local curdir = get_current_dir()
+
 	---@type { title: string?, description: string?, author: string?, ignore: string[]?, authors: string[]? }
 	local addon = assert( decode( read(ADDON_JSON) ), "Failed to parse addon.json file" )
 
@@ -97,124 +237,37 @@ do
 	local files = {}
 
 	---@type string[]
-	local blocklist = {}
-
-	-- Retrieved from https://github.com/Facepunch/gmad/blob/master/include/AddonWhiteList.h
-	local allowlist = map({
-		"lua/*.lua",
-		"scenes/*.vcd",
-		"particles/*.pcf",
-		"resource/fonts/*.ttf",
-		"scripts/vehicles/*.txt",
-		"resource/localization/*/*.properties",
-		"maps/*.bsp",
-		"maps/*.lmp",
-		"maps/*.nav",
-		"maps/*.ain",
-		"maps/thumb/*.png",
-		"sound/*.wav",
-		"sound/*.mp3",
-		"sound/*.ogg",
-		"materials/*.vmt",
-		"materials/*.vtf",
-		"materials/*.png",
-		"materials/*.jpg",
-		"materials/*.jpeg",
-		"materials/colorcorrection/*.raw",
-		"models/*.mdl",
-		"models/*.vtx",
-		"models/*.phy",
-		"models/*.ani",
-		"models/*.vvd",
-		"gamemodes/*/*.txt",
-		"gamemodes/*/*.fgd",
-		"gamemodes/*/logo.png",
-		"gamemodes/*/icon24.png",
-		"gamemodes/*/gamemode/*.lua",
-		"gamemodes/*/entities/effects/*.lua",
-		"gamemodes/*/entities/weapons/*.lua",
-		"gamemodes/*/entities/entities/*.lua",
-		"gamemodes/*/backgrounds/*.png",
-		"gamemodes/*/backgrounds/*.jpg",
-		"gamemodes/*/backgrounds/*.jpeg",
-		"gamemodes/*/content/models/*.mdl",
-		"gamemodes/*/content/models/*.vtx",
-		"gamemodes/*/content/models/*.phy",
-		"gamemodes/*/content/models/*.ani",
-		"gamemodes/*/content/models/*.vvd",
-		"gamemodes/*/content/materials/*.vmt",
-		"gamemodes/*/content/materials/*.vtf",
-		"gamemodes/*/content/materials/*.png",
-		"gamemodes/*/content/materials/*.jpg",
-		"gamemodes/*/content/materials/*.jpeg",
-		"gamemodes/*/content/materials/colorcorrection/*.raw",
-		"gamemodes/*/content/scenes/*.vcd",
-		"gamemodes/*/content/particles/*.pcf",
-		"gamemodes/*/content/resource/fonts/*.ttf",
-		"gamemodes/*/content/scripts/vehicles/*.txt",
-		"gamemodes/*/content/resource/localization/*/*.properties",
-		"gamemodes/*/content/maps/*.bsp",
-		"gamemodes/*/content/maps/*.nav",
-		"gamemodes/*/content/maps/*.ain",
-		"gamemodes/*/content/maps/thumb/*.png",
-		"gamemodes/*/content/sound/*.wav",
-		"gamemodes/*/content/sound/*.mp3",
-		"gamemodes/*/content/sound/*.ogg",
-
-		-- Immutable version of `data` folder: https://github.com/Facepunch/gmad/commit/d55a4438a5bc0d2f25c02bda1e73e8034fdf736b
-		"data_static/*.txt",
-		"data_static/*.dat",
-		"data_static/*.json",
-		"data_static/*.xml",
-		"data_static/*.csv",
-		"data_static/*.dem",
-		"data_static/*.vcd",
-
-		"data_static/*.vtf",
-		"data_static/*.vmt",
-		"data_static/*.png",
-		"data_static/*.jpg",
-		"data_static/*.jpeg",
-
-		"data_static/*.mp3",
-		"data_static/*.wav",
-		"data_static/*.ogg",
-	}, wildcard2pattern)
+	local blacklist = {}
 
 	if addon.ignore then -- if specified list of files to ignore.
-		blocklist = map(addon.ignore, wildcard2pattern)
+		blacklist = map(addon.ignore, wildcard2pattern)
 	end
 
+	print("Got ", #files, " files")
 	do
 		local dir = assert(io.popen(PATH_SEP == "\\" and "dir /s /b ." or "find . -type f"))
 
 		for path in dir:lines() do
-			local normalized = path:gsub(PATH_SEP, "/") -- normalize
+			local normalized = remove_prefix(path, curdir):gsub(PATH_SEP, "/") -- normalize
 
-			for _, allow_pattern in ipairs(allowlist) do
-				if normalized:match(allow_pattern) then
-					for _, block_pattern in ipairs(blocklist) do
-						if normalized:match(block_pattern) then
-							print("Blocked ", normalized)
-							goto cont
-						end
-					end
+			print("File",normalized)
 
-					files[#files + 1] = {
-						path = normalized:sub(3), -- strip initial ./ part
-						content = read(path)
-					}
-
-					goto cont
-				end
+			if not passes_any_filter(normalized, whitelist) then
+				print("> !Warning: skipping because not whitelisted")
+			elseif passes_any_filter(normalized, blacklist) then
+				print("> Blacklisted in addon.json")
+			else
+				files[#files + 1] = {
+					path = normalized:sub(3), -- strip initial ./ part
+					content = read(path)
+				}
+				print("> Added to GMA")
 			end
-
-			print("Warning: File " .. normalized .. " not whitelisted. Skipping..")
-			::cont::
 		end
 
 		dir:close()
 	end
+
 
 	local handle = assert(io.open(OUTPUT_FILE, "wb"), "Failed to create/overwrite output file")
 	handle:write(
